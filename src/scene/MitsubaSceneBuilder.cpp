@@ -1607,8 +1607,16 @@ struct VariantRender {
       for (auto &s : sceneShapes)
         setObject(pscene, "shape_" + std::to_string(idx++), s.get());
       idx = 0;
-      for (auto &g : sceneGroups)
+      for (auto &g : sceneGroups) {
+        // On OptiX a Scene keeps the acceleration structure of each of its
+        // shapegroups in its own state, but only builds it for groups flagged
+        // dirty — and the previous Scene cleared that flag. A cached
+        // shapegroup entering a new Scene must be re-flagged, otherwise
+        // Mitsuba indexes an empty array there (access violation on cuda
+        // variants). Harmless elsewhere: the constructor clears the flag.
+        ((Shape *)g.get())->mark_dirty();
         setObject(pscene, "shapegroup_" + std::to_string(idx++), g.get());
+      }
       idx = 0;
       for (auto &e : sceneEmitters)
         setObject(pscene, "emitter_" + std::to_string(idx++), e.get());

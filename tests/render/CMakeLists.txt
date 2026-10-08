@@ -76,10 +76,20 @@ set_tests_properties(metal.triangle_matte PROPERTIES
   SKIP_RETURN_CODE 77
   ENVIRONMENT "MITSUBA_ANARI_TEST_VARIANT=metal_ad_rgb")
 
+# Scene updates on the GPU: an instance transform change puts a cached
+# shapegroup into a new Mitsuba Scene, which the OptiX backend treats
+# differently from the CPU ones. Without a usable GPU the device falls back
+# to scalar_rgb and the test still passes.
+add_test(NAME gpu.scene_update
+  COMMAND anari_scene_update_test "$<TARGET_FILE_DIR:anari_library_mitsuba>")
+set_tests_properties(gpu.scene_update PROPERTIES
+  LABELS "integration;render;gpu"
+  ENVIRONMENT "ANARI_MITSUBA_VARIANT=cuda_ad_rgb")
+
 if(WIN32)
   set(_render_tests anari.triangle_matte anari.scene_update anari.pbr_texture
       anari.lights_depth anari.geometry llvm.triangle_matte gpu.triangle_matte
-      metal.triangle_matte)
+      metal.triangle_matte gpu.scene_update)
   set_property(TEST ${_render_tests}
     APPEND PROPERTY ENVIRONMENT_MODIFICATION
     "PATH=path_list_prepend:$<TARGET_FILE_DIR:anari::anari>")
