@@ -1,0 +1,103 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "MITSUBA_ANARI_BUILD_TESTS": "ON",
+        "MITSUBA_ANARI_BUILD_EXAMPLES": "ON",
+        "MITSUBA_ANARI_FETCH_DEPENDENCIES": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Windows MSVC Debug",
+      "inherits": "windows-msvc",
+      "cacheVariables": { "MITSUBA_ANARI_DEP_CONFIGS": "Debug" }
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Windows MSVC Release",
+      "inherits": "windows-msvc",
+      "cacheVariables": { "MITSUBA_ANARI_DEP_CONFIGS": "Release" }
+    },
+    {
+      "name": "windows-msvc-relwithdebinfo",
+      "displayName": "Windows MSVC RelWithDebInfo",
+      "inherits": "windows-msvc",
+      "cacheVariables": { "MITSUBA_ANARI_DEP_CONFIGS": "RelWithDebInfo" }
+    },
+    {
+      "name": "linux-gcc",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Unix Makefiles",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "linux-gcc-debug",
+      "displayName": "Linux GCC Debug",
+      "inherits": "linux-gcc",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-gcc-release",
+      "displayName": "Linux GCC Release",
+      "inherits": "linux-gcc",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "macos-clang",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Unix Makefiles",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "macos-clang-debug",
+      "displayName": "macOS Clang Debug",
+      "inherits": "macos-clang",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "macos-clang-release",
+      "displayName": "macOS Clang Release",
+      "inherits": "macos-clang",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc-debug", "configuration": "Debug" },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "Release" },
+    { "name": "windows-msvc-relwithdebinfo", "configurePreset": "windows-msvc-relwithdebinfo", "configuration": "RelWithDebInfo" },
+    { "name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug" },
+    { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release" },
+    { "name": "macos-clang-debug", "configurePreset": "macos-clang-debug" },
+    { "name": "macos-clang-release", "configurePreset": "macos-clang-release" }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true }
+    },
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc-debug", "configuration": "Debug", "inherits": "test-base" },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc-release", "configuration": "Release", "inherits": "test-base" },
+    { "name": "windows-msvc-relwithdebinfo", "configurePreset": "windows-msvc-relwithdebinfo", "configuration": "RelWithDebInfo", "inherits": "test-base" },
+    { "name": "linux-gcc-debug", "configurePreset": "linux-gcc-debug", "inherits": "test-base" },
+    { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release", "inherits": "test-base" },
+    { "name": "macos-clang-debug", "configurePreset": "macos-clang-debug", "inherits": "test-base" },
+    { "name": "macos-clang-release", "configurePreset": "macos-clang-release", "inherits": "test-base" }
+  ]
+}

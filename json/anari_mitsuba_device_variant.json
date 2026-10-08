@@ -1,0 +1,7 @@
+{
+    "info" : {
+        "name" : "MITSUBA_DEVICE_VARIANT",
+        "type" : "extension",
+        "dependencies" : []
+    }
+}

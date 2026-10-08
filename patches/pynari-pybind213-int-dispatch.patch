@@ -1,0 +1,100 @@
+﻿diff --git a/pynari/Frame.cpp b/pynari/Frame.cpp
+index 32b304e..d5dcfd9 100644
+--- a/pynari/Frame.cpp
++++ b/pynari/Frame.cpp
+@@ -124,6 +124,29 @@ namespace pynari {
+       return frame;
+     }
+ 
++    if (channelName == "channel.depth") {
++      uint32_t width, height;
++      ANARIDataType pixelType;
++
++      const void *mapped
++        = anariMapFrame(device->handle,(ANARIFrame)this->handle,
++                        "channel.depth",
++                        &width,&height,&pixelType);
++      if (!mapped || pixelType != ANARI_FLOAT32)
++        throw std::runtime_error("device did not provide a mappable "
++                                 "ANARI_FLOAT32 'channel.depth'");
++      py::object frame
++        = py::array_t<float>(
++                             /* numpy shape */
++                             {(int)height,(int)width},
++                             /*! C strides */
++                             {width*sizeof(float),
++                              sizeof(float)},
++                             (const float*)mapped);
++      anariUnmapFrame(device->handle,(ANARIFrame)handle,"channel.depth");
++      return frame;
++    }
++
+     throw std::runtime_error("unsupported channel name '"+channelName
+                              +"' in pynari::Frame::get()");
+   }
+diff --git a/pynari/Object.cpp b/pynari/Object.cpp
+index 79cac9a..3ca106c 100644
+--- a/pynari/Object.cpp
++++ b/pynari/Object.cpp
+@@ -263,6 +263,18 @@ namespace pynari {
+     switch(type) {
+     case ANARI_FLOAT32:
+       return anari::setParameter(device->handle,handle,name,(float)v);
++    // python ints may arrive through this overload depending on the
++    // pybind11 version's overload resolution (observed with pybind11 2.13);
++    // honor the explicitly declared parameter type.
++    case ANARI_INT32:
++      return anari::setParameter(device->handle,handle,name,(int)v);
++    case ANARI_UINT32:
++      return anari::setParameter(device->handle,handle,name,(uint)v);
++    case ANARI_UINT64:
++      return anari::setParameter(device->handle,handle,name,(uint64_t)v);
++    case ANARI_DATA_TYPE:
++      return anari::setParameter(device->handle,handle,name,
++                                 (anari::DataType)(int)v);
+     default:
+       throw std::runtime_error
+         (std::string(__PRETTY_FUNCTION__)
+@@ -287,9 +299,15 @@ namespace pynari {
+     case ANARI_FLOAT32_VEC2:
+       return anari::setParameter(device->handle,handle,name,
+                                  math::float2(v[0],v[1]));
+-    case ANARI_FLOAT32_BOX1: 
++    case ANARI_FLOAT32_BOX1:
+       return anariSetParameter(device->handle,handle,name,type,v);
+-      
++    // python int tuples may arrive through this overload depending on the
++    // pybind11 version's overload resolution (observed with pybind11 2.13);
++    // honor the explicitly declared parameter type.
++    case ANARI_UINT32_VEC2:
++      return anari::setParameter(device->handle,handle,name,
++                                 math::uint2((uint)v[0],(uint)v[1]));
++
+     default:
+       throw std::runtime_error
+         (std::string(__PRETTY_FUNCTION__)
+@@ -308,6 +326,11 @@ namespace pynari {
+                                  math::float3(std::get<0>(v),
+                                               std::get<1>(v),
+                                               std::get<2>(v)));
++    case ANARI_UINT32_VEC3:
++      return anari::setParameter(device->handle,this->handle,name,
++                                 math::uint3((uint)std::get<0>(v),
++                                             (uint)std::get<1>(v),
++                                             (uint)std::get<2>(v)));
+     default:
+       throw std::runtime_error
+         (std::string(__PRETTY_FUNCTION__)
+@@ -327,6 +350,12 @@ namespace pynari {
+                                               std::get<1>(v),
+                                               std::get<2>(v),
+                                               std::get<3>(v)));
++    case ANARI_UINT32_VEC4:
++      return anari::setParameter(device->handle,this->handle,name,
++                                 math::uint4((uint)std::get<0>(v),
++                                             (uint)std::get<1>(v),
++                                             (uint)std::get<2>(v),
++                                             (uint)std::get<3>(v)));
+     default:
+       throw std::runtime_error
+         (std::string(__PRETTY_FUNCTION__)+" unsupported type "

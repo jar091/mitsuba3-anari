@@ -1,0 +1,4 @@
+[submodule "ext/mitsuba3"]
+	path = ext/mitsuba3
+	url = https://github.com/jar091/mitsuba3
+	branch = master

@@ -1,0 +1,112 @@
+{
+  "info": {
+    "name": "MITSUBA_DEVICE",
+    "type": "device",
+    "dependencies": [
+      "anari_core_1_0",
+      "anari_core_objects_base_1_0",
+      "khr_device_synchronization",
+      "khr_frame_accumulation",
+      "khr_camera_perspective",
+      "khr_camera_orthographic",
+      "khr_geometry_triangle",
+      "khr_geometry_quad",
+      "khr_geometry_sphere",
+      "khr_geometry_curve",
+      "khr_material_matte",
+      "khr_material_physically_based",
+      "khr_sampler_image2d",
+      "khr_light_directional",
+      "khr_light_point",
+      "khr_light_quad",
+      "khr_light_spot",
+      "khr_light_hdri",
+      "khr_spatial_field_structured_regular",
+      "khr_volume_transfer_function1d",
+      "khr_geometry_cone",
+      "khr_geometry_cylinder",
+      "khr_geometry_isosurface",
+      "khr_sampler_image1d",
+      "khr_camera_depth_of_field",
+      "khr_renderer_background_image",
+      "khr_spatial_field_unstructured",
+      "khr_renderer_ambient_light",
+      "khr_renderer_background_color",
+      "anari_mitsuba_device_variant"
+    ]
+  },
+  "objects": [
+    {
+      "type": "ANARI_DEVICE",
+      "parameters": [
+        {
+          "name": "mitsuba.variant",
+          "types": [
+            "ANARI_STRING"
+          ],
+          "tags": [],
+          "default": "scalar_rgb",
+          "values": [
+            "scalar_rgb",
+            "llvm_ad_rgb",
+            "cuda_ad_rgb",
+            "metal_ad_rgb"
+          ],
+          "description": "Mitsuba rendering variant (ANARI_MITSUBA_DEVICE_VARIANT); probed at first render, falls back to scalar_rgb with a warning if unavailable"
+        }
+      ]
+    },
+    {
+      "type": "ANARI_RENDERER",
+      "name": "default",
+      "parameters": [
+        {
+          "name": "background",
+          "types": [
+            "ANARI_FLOAT32_VEC4",
+            "ANARI_ARRAY2D"
+          ],
+          "tags": [],
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "description": "background color and alpha (RGBA), or an image (ARRAY2D) stretched over the frame; composited under the rendered image"
+        },
+        {
+          "name": "pixelSamples",
+          "types": [
+            "ANARI_INT32"
+          ],
+          "tags": [],
+          "default": 16,
+          "description": "samples per pixel"
+        },
+        {
+          "name": "ambientColor",
+          "types": [
+            "ANARI_FLOAT32_VEC3"
+          ],
+          "tags": [],
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "description": "ambient light color"
+        },
+        {
+          "name": "ambientRadiance",
+          "types": [
+            "ANARI_FLOAT32"
+          ],
+          "tags": [],
+          "default": 0.0,
+          "description": "ambient light intensity (constant environment emitter, hidden from primary rays; replaced by an hdri light when present)"
+        }
+      ]
+    }
+  ]
+}
