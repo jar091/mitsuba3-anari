@@ -195,6 +195,9 @@ float maxComponent(const float3 &c)
 struct ColorSource
 {
   const ImageSampler *sampler{nullptr};
+  // Sampler driven by the surface position (image3D) rather than by a
+  // geometry attribute; exclusive with 'sampler' and the attribute arrays.
+  const ImageSampler *positionSampler{nullptr};
   const Array1D *vertexAttr{nullptr};
   const Array1D *primAttr{nullptr};
   float3 constant{0.8f, 0.8f, 0.8f};
@@ -226,6 +229,11 @@ ColorSource resolveColorSource(const Material *material, const Geometry *geo)
     return cs;
   cs.constant = param->constant();
   cs.sampler = param->sampler();
+  if (cs.sampler && cs.sampler->positionInput()) {
+    cs.positionSampler = cs.sampler;
+    cs.sampler = nullptr;
+    return cs;
+  }
   AttributeId id;
   if (param->sourceAttribute(id)) {
     // Lookup order as in the other ANARI devices: per vertex, per
@@ -462,6 +470,49 @@ struct VariantRender {
     return expandTexture(pmgr->create_object(p,
         mitsuba::detail::variant<Float, Spectrum>::name,
         mitsuba::ObjectType::Texture));
+  }
+
+  // ANARI image3D sampler driven by the surface position -> Mitsuba 'volume'
+  // texture over an RGB 'gridvolume', with the sampler's output transform
+  // and the given scale baked into the texels. The grid spans the unit cube
+  // of the texture coordinate (inTransform * position + inOffset), so its
+  // to_world is the inverse of that map. 'objectPosition' is looked up in
+  // world space too, which is the same thing for surfaces whose instance
+  // transform is the identity.
+  static mitsuba::ref<Texture> buildVolumeTexture(
+      const ImageSampler &sampler, float scale)
+  {
+    const auto &texels = sampler.texels();
+    std::vector<float> data(texels.size() * 3);
+    for (size_t i = 0; i < texels.size(); ++i) {
+      const float4 c = sampler.transformOutput(texels[i]);
+      data[i * 3 + 0] = c.x * scale;
+      data[i * 3 + 1] = c.y * scale;
+      data[i * 3 + 2] = c.z * scale;
+    }
+
+    auto wrapMode = [](const std::string &m) -> const char * {
+      if (m == "repeat")
+        return "repeat";
+      if (m == "mirrorRepeat")
+        return "mirror";
+      return "clamp"; // clampToEdge / default
+    };
+
+    auto *pmgr = mitsuba::PluginManager::instance();
+    MiProps pg("gridvolume");
+    setObject(pg, "grid", makeGrid(sampler.resolution(), 3, data).get());
+    pg.set("to_world", toXform(linalg::inverse(sampler.inputMatrix())));
+    pg.set("raw", true); // texels are linear already
+    pg.set("filter_type", sampler.nearestFilter() ? "nearest" : "trilinear");
+    // A grid volume has one wrap mode for all axes; a mismatch is reported
+    // by Image3D::finalize().
+    pg.set("wrap_mode", wrapMode(sampler.wrapMode(0)));
+    auto grid = pmgr->template create_object<MiVolume>(pg);
+
+    MiProps pt("volume");
+    setObject(pt, "volume", grid.get());
+    return pmgr->template create_object<Texture>(pt);
   }
 
   static mitsuba::ref<Texture> meshAttributeTexture(
@@ -1134,9 +1185,22 @@ struct VariantRender {
       return emissive ? buildSurfaceEmitter(material)
                       : mitsuba::ref<Emitter>();
     };
+    // A position-driven sampler (image3D) textures every kind of geometry
+    // the same way: it replaces what would be a constant color.
+    auto applyPositionSampler = [&](BaseColor &bc) {
+      const ImageSampler *sampler = cs.positionSampler;
+      if (!sampler || bc.texture)
+        return;
+      bc.texture = [sampler](float scale) {
+        return buildVolumeTexture(*sampler, scale);
+      };
+      bc.textureKey = "sampler3d " + std::to_string(uintptr_t(sampler)) + " "
+          + std::to_string(stampOf(sampler));
+    };
     auto constantBSDF = [&](const float3 &c) {
       BaseColor bc;
       bc.constant = c;
+      applyPositionSampler(bc);
       return sharedBSDF(cache, material, bc);
     };
     auto addShape = [&](mitsuba::Object *s) {
@@ -1150,6 +1214,7 @@ struct VariantRender {
       bc.constant = cs.constant;
       auto emitter = newEmitter();
       auto mesh = buildTriMesh(tm, emitter.get(), bc);
+      applyPositionSampler(bc);
       finishMesh(mesh.get(), sharedBSDF(cache, material, bc).get());
       addShape(mesh.get());
     };
@@ -1178,6 +1243,7 @@ struct VariantRender {
       BaseColor bc;
       auto emitter = newEmitter();
       auto mesh = buildMesh(*mgeo, cs, emitter.get(), bc);
+      applyPositionSampler(bc);
       finishMesh(mesh.get(), sharedBSDF(cache, material, bc).get());
       addShape(mesh.get());
     } else if (const auto *sph = dynamic_cast<const SphereGeometry *>(geometry)) {

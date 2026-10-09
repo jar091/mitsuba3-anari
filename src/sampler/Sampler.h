@@ -7,6 +7,7 @@
 
 #include "array/Array1D.h"
 #include "array/Array2D.h"
+#include "array/Array3D.h"
 #include "core/Object.h"
 // helium
 #include "helium/utility/ChangeObserverPtr.h"
@@ -39,8 +40,18 @@ struct ImageSampler : public Sampler
   bool isValid() const override;
 
   const std::string &inAttribute() const { return m_inAttribute; }
+  // True when the sampler is driven by the surface position instead of a
+  // geometry attribute array.
+  bool positionInput() const
+  {
+    return m_inAttribute == "worldPosition"
+        || m_inAttribute == "objectPosition";
+  }
   bool nearestFilter() const { return m_filter == "nearest"; }
   const std::string &wrapMode(int axis) const { return m_wrapMode[axis]; }
+  // The affine map from the input attribute to the texture coordinate
+  // (inTransform and inOffset combined).
+  mat4 inputMatrix() const;
 
   // ANARI input transform applied to an attribute value.
   float4 transformInput(const float4 &attribute) const;
@@ -70,7 +81,7 @@ struct ImageSampler : public Sampler
  private:
   std::string m_inAttribute{"attribute0"};
   std::string m_filter{"linear"};
-  std::string m_wrapMode[2]{"clampToEdge", "clampToEdge"};
+  std::string m_wrapMode[3]{"clampToEdge", "clampToEdge", "clampToEdge"};
   mat4 m_inTransform{linalg::identity};
   float4 m_inOffset{0.f, 0.f, 0.f, 0.f};
   mat4 m_outTransform{linalg::identity};
@@ -103,9 +114,23 @@ struct Image2D : public ImageSampler
   helium::ChangeObserverPtr<Array2D> m_image;
 };
 
-// Known ANARI sampler subtypes the device does not implement (image3D,
-// primitive, transform): invalid, materials using them fall back to their
-// constant value (reported once on commit).
+// ANARI 'image3D' sampler -> Mitsuba 'volume' texture over a 'gridvolume'.
+// Mitsuba looks a volume texture up at the surface position, so the sampler
+// has to be driven by 'worldPosition' or 'objectPosition'.
+struct Image3D : public ImageSampler
+{
+  Image3D(MitsubaGlobalState *s);
+
+  void commitParameters() override;
+  void finalize() override;
+
+ private:
+  helium::ChangeObserverPtr<Array3D> m_image;
+};
+
+// Known ANARI sampler subtypes the device does not implement (primitive,
+// transform): invalid, materials using them fall back to their constant
+// value (reported once on commit).
 struct UnsupportedSampler : public Sampler
 {
   UnsupportedSampler(MitsubaGlobalState *s, std::string_view subtype);

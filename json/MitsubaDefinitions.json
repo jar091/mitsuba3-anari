@@ -27,6 +27,7 @@
       "khr_geometry_cylinder",
       "khr_geometry_isosurface",
       "khr_sampler_image1d",
+      "khr_sampler_image3d",
       "khr_camera_depth_of_field",
       "khr_renderer_background_image",
       "khr_spatial_field_unstructured",

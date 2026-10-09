@@ -26,11 +26,12 @@ Windows-validated; Linux/macOS validation pending local machines.
 | Geometry | `cylinder` | SUPPORTED | `cylinder` shapes + `disk` caps; tessellated (64 sides) with bound color attributes | pynari `geometry-cylinders*` | `primitive.radius`/`radius`, `caps`, `vertex.cap`, vertex/primitive colors |
 | Geometry | `cone` | SUPPORTED | tessellated cone frustums (64 sides, smooth normals) | pynari `geometry-cones*` | `vertex.radius`, `caps`, `vertex.cap`, vertex/primitive colors |
 | Geometry | `isosurface` | PARTIAL | marching tetrahedra on the (upsampled) `structuredRegular` field -> mesh | pynari `sample03-isosurface` | `isovalue` float or array; other field types warn and are skipped |
-| Material | `matte` | SUPPORTED | `diffuse` BSDF | `anari.triangle_matte`, `anari.pbr_texture`, `anari.geometry` | `color` as constant, image1D/image2D sampler, or attribute binding (`color`, `attribute0..3`); `opacity` not yet |
+| Material | `matte` | SUPPORTED | `diffuse` BSDF | `anari.triangle_matte`, `anari.pbr_texture`, `anari.geometry` | `color` as constant, image1D/image2D/image3D sampler, or attribute binding (`color`, `attribute0..3`); `opacity` not yet |
 | Material | `physicallyBased` | SUPPORTED | `roughplastic`+`diffuse` dielectric, `principled` metal, `roughdielectric` glass, `mask` opacity | `anari.pbr_texture`, pynari samples | baseColor (constant/sampler/attribute)/metallic/roughness/ior/opacity/transmission/specular/specularColor/emissive (area emitters); normal map, clearcoat, sheen, iridescence warn |
 | Sampler | `image2D` | SUPPORTED | `bitmap` texture (linear float texels) | `anari.pbr_texture` | FLOAT32/UFIXED8/UFIXED16 1-4 channels, sRGB decode; in/out transforms + offsets; RGBA alpha dropped; single wrap mode |
 | Sampler | `image1D` | SUPPORTED | 1-row `bitmap` texture via mesh texture coordinates; CPU-evaluated per-primitive colors on other geometry | pynari `geometry-spheres-with-sampler1D` | same parameters as image2D (`wrapMode`) |
-| Sampler | `image3D`, `primitive`, `transform` | UNSUPPORTED | — | pynari `sampler-image3d*` | warning; materials fall back to their constant color |
+| Sampler | `image3D` | PARTIAL | `volume` texture over an RGB `gridvolume` | pynari `sampler-image3d*` | `inAttribute` `worldPosition` or `objectPosition` only (both looked up in world space; other attributes warn and use the constant color); in/out transforms + offsets; one wrap mode for all axes; `clampToBorder` clamps to the edge |
+| Sampler | `primitive`, `transform` | UNSUPPORTED | — | — | warning; materials fall back to their constant color |
 | Light | `directional` | SUPPORTED | `directional` emitter (irradiance convention matches) | `anari.triangle_matte`, `anari.scene_update` | |
 | Light | `point` | SUPPORTED | `point` emitter | `anari.lights_depth` | intensity, power/(4pi) |
 | Light | `quad` | SUPPORTED | `rectangle` + `area` emitter | `anari.lights_depth` | radiance / intensity/A / power/(pi*A); front side only |
@@ -62,6 +63,7 @@ Windows-validated; Linux/macOS validation pending local machines.
 | `KHR_MATERIAL_PHYSICALLY_BASED` | SUPPORTED | `anari.pbr_texture` | mapping in the `physicallyBased` row above |
 | `KHR_SAMPLER_IMAGE2D` | SUPPORTED | `anari.pbr_texture` | |
 | `KHR_SAMPLER_IMAGE1D` | SUPPORTED | pynari `geometry-spheres-with-sampler1D` | |
+| `KHR_SAMPLER_IMAGE3D` | PARTIAL | pynari `sampler-image3d*` | position-driven samplers only, see the `image3D` row above |
 | `KHR_GEOMETRY_CONE` / `KHR_GEOMETRY_CYLINDER` / `KHR_GEOMETRY_ISOSURFACE` | SUPPORTED / PARTIAL | pynari geometry samples | see table above |
 | `KHR_CAMERA_DEPTH_OF_FIELD` | SUPPORTED | pynari `camera-depth-of-field` | `thinlens` sensor |
 | `KHR_RENDERER_AMBIENT_LIGHT` / `KHR_RENDERER_BACKGROUND_COLOR` / `KHR_RENDERER_BACKGROUND_IMAGE` | SUPPORTED | pynari samples | |

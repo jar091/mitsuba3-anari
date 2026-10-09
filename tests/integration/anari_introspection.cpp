@@ -75,7 +75,7 @@ int main(int argc, char **argv)
       {ANARI_MATERIAL, "material", {"matte", "physicallyBased", nullptr}},
       {ANARI_LIGHT, "light",
           {"directional", "point", "quad", "spot", "hdri", nullptr}},
-      {ANARI_SAMPLER, "sampler", {"image1D", "image2D", nullptr}},
+      {ANARI_SAMPLER, "sampler", {"image1D", "image2D", "image3D", nullptr}},
       {ANARI_VOLUME, "volume", {"transferFunction1D", nullptr}},
       {ANARI_SPATIAL_FIELD,
           "spatial field",

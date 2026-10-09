@@ -57,6 +57,18 @@ void ColorParameter::finalize(Object &owner, const char *name)
           "[mitsuba] '%s' is bound to an invalid sampler; using the constant "
           "color",
           name);
+    } else if (dynamic_cast<const Image3D *>(image)) {
+      // Mitsuba looks a volume texture up at the surface position.
+      if (image->positionInput()) {
+        m_validSampler = image;
+      } else {
+        owner.reportMessage(ANARI_SEVERITY_WARNING,
+            "[mitsuba] image3D sampler 'inAttribute' '%s' is not supported "
+            "(supported: worldPosition, objectPosition); '%s' uses the "
+            "constant color",
+            image->inAttribute().c_str(),
+            name);
+      }
     } else if (!attributeIdFromName(image->inAttribute(), id)) {
       owner.reportMessage(ANARI_SEVERITY_WARNING,
           "[mitsuba] sampler 'inAttribute' '%s' is not supported (supported: "
@@ -71,8 +83,11 @@ void ColorParameter::finalize(Object &owner, const char *name)
 
 bool ColorParameter::sourceAttribute(AttributeId &id) const
 {
-  if (m_validSampler)
-    return attributeIdFromName(m_validSampler->inAttribute(), id);
+  if (m_validSampler) {
+    // A position-driven sampler (image3D) needs no geometry attribute.
+    return !m_validSampler->positionInput()
+        && attributeIdFromName(m_validSampler->inAttribute(), id);
+  }
   if (m_hasAttribute) {
     id = m_attribute;
     return true;

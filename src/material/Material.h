@@ -14,7 +14,8 @@
 namespace mitsuba_anari {
 
 // A material color parameter: a constant, a geometry attribute binding
-// ("color", "attribute0".."attribute3") or an image sampler.
+// ("color", "attribute0".."attribute3") or an image sampler (image1D/image2D
+// on a geometry attribute, image3D on the surface position).
 struct ColorParameter
 {
   ColorParameter(Object *owner, float3 defaultValue);
@@ -24,7 +25,7 @@ struct ColorParameter
   void finalize(Object &owner, const char *name);
 
   float3 constant() const { return m_constant; }
-  // Valid image sampler (image1D/image2D) bound to the parameter, if any.
+  // Valid image sampler bound to the parameter, if any.
   const ImageSampler *sampler() const { return m_validSampler; }
   // Attribute bound directly (string parameter), if any.
   bool hasAttribute() const { return m_hasAttribute; }

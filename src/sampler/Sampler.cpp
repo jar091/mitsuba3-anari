@@ -21,8 +21,9 @@ Sampler *Sampler::createInstance(
     return new Image1D(s);
   if (subtype == "image2D")
     return new Image2D(s);
-  if (subtype == "image3D" || subtype == "primitive"
-      || subtype == "transform")
+  if (subtype == "image3D")
+    return new Image3D(s);
+  if (subtype == "primitive" || subtype == "transform")
     return new UnsupportedSampler(s, subtype);
   return (Sampler *)new UnknownObject(ANARI_SAMPLER, subtype, s);
 }
@@ -45,6 +46,7 @@ void ImageSampler::commitParameters()
   const std::string wrap = getParamString("wrapMode", "clampToEdge");
   m_wrapMode[0] = getParamString("wrapMode1", wrap);
   m_wrapMode[1] = getParamString("wrapMode2", wrap);
+  m_wrapMode[2] = getParamString("wrapMode3", wrap);
   m_inTransform = getParam<mat4>("inTransform", mat4(linalg::identity));
   m_inOffset = getParam<float4>("inOffset", float4(0.f));
   m_outTransform = getParam<mat4>("outTransform", mat4(linalg::identity));
@@ -59,6 +61,14 @@ bool ImageSampler::isValid() const
 float4 ImageSampler::transformInput(const float4 &a) const
 {
   return linalg::mul(m_inTransform, a) + m_inOffset;
+}
+
+mat4 ImageSampler::inputMatrix() const
+{
+  // coord = inTransform * (p, 1) + inOffset
+  mat4 m = m_inTransform;
+  m[3] = m[3] + m_inOffset;
+  return m;
 }
 
 float4 ImageSampler::transformOutput(const float4 &t) const
@@ -255,6 +265,47 @@ void Image2D::finalize()
     reportMessage(ANARI_SEVERITY_WARNING,
         "[mitsuba] image2D wrapMode1 != wrapMode2 is not supported by the "
         "Mitsuba bitmap texture; wrapMode1 is used for both axes");
+  }
+
+  m_valid = true;
+}
+
+// Image3D ////////////////////////////////////////////////////////////////////
+
+Image3D::Image3D(MitsubaGlobalState *s) : ImageSampler(s), m_image(this) {}
+
+void Image3D::commitParameters()
+{
+  ImageSampler::commitParameters();
+  m_image = getParamObject<Array3D>("image");
+}
+
+void Image3D::finalize()
+{
+  m_valid = false;
+  m_texels.clear();
+
+  if (!m_image) {
+    reportMessage(ANARI_SEVERITY_WARNING,
+        "[mitsuba] image3D sampler is missing required 'image'");
+    return;
+  }
+  const auto size = m_image->size();
+  if (size.x == 0 || size.y == 0 || size.z == 0) {
+    reportMessage(
+        ANARI_SEVERITY_WARNING, "[mitsuba] image3D sampler 'image' is empty");
+    return;
+  }
+  if (!loadTexels(m_image->data(),
+          m_image->elementType(),
+          size_t(size.x) * size.y * size.z))
+    return;
+  m_resolution = uint3(uint32_t(size.x), uint32_t(size.y), uint32_t(size.z));
+
+  if (wrapMode(0) != wrapMode(1) || wrapMode(0) != wrapMode(2)) {
+    reportMessage(ANARI_SEVERITY_WARNING,
+        "[mitsuba] image3D wrap modes that differ per axis are not supported "
+        "by the Mitsuba grid volume; wrapMode1 is used for all axes");
   }
 
   m_valid = true;
