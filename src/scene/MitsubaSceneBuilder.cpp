@@ -1024,9 +1024,64 @@ struct VariantRender {
   {
     auto *pmgr = mitsuba::PluginManager::instance();
 
+    // 'imageRegion': the frame shows the part (x0, y0, x1, y1) of the image
+    // plane which 'fovy' (or 'height') spans. That part is a view volume
+    // around the same direction whose axis is off its center: 'center' is
+    // the center of the region relative to the center of the image plane, in
+    // units of the region's size (x to the right, y up).
+    const float4 region = camera.imageRegion();
+    const bool fullRegion = camera.hasFullImageRegion();
+    const float2 regionSize(region.z - region.x, region.w - region.y);
+    const float2 center((region.x + region.z - 1.f) / (2.f * regionSize.x),
+        (region.y + region.w - 1.f) / (2.f * regionSize.y));
+
+    const auto *persp = dynamic_cast<const Perspective *>(&camera);
+    const bool dof = persp && persp->apertureRadius() > 0.f;
+
+    // Mitsuba's thin lens camera has no principal point offset. For it the
+    // region is the crop window of a larger film which is centered on the
+    // optical axis. Film size and crop offset are integral: the window can be
+    // off by up to a quarter of a pixel.
+    const bool cropRegion = dof && !fullRegion;
+    uint2 filmSize = frameSize;
+    uint2 cropOffset(0u, 0u);
+    if (cropRegion) {
+      const float2 halfExtent(
+          std::max(std::fabs(region.x - 0.5f), std::fabs(region.z - 0.5f))
+              / regionSize.x,
+          std::max(std::fabs(region.y - 0.5f), std::fabs(region.w - 0.5f))
+              / regionSize.y);
+      // 'c': center of the window from the film's center, in window sizes,
+      // along the film axis (x to the right, y down)
+      const double c[2] = {center.x, -center.y};
+      for (int i = 0; i < 2; ++i) {
+        const double size = frameSize[i];
+        const double first = (c[i] - 0.5) * size; // from the film's center
+        const uint32_t minSize =
+            (uint32_t)std::ceil(2.0 * halfExtent[i] * size) + 2u;
+        double bestError = 1.0;
+        for (uint32_t s = minSize; s < minSize + 2u; ++s) {
+          const double offset = 0.5 * s + first;
+          const double rounded = std::floor(offset + 0.5);
+          if (std::fabs(offset - rounded) < bestError) {
+            bestError = std::fabs(offset - rounded);
+            filmSize[i] = s;
+            cropOffset[i] = (uint32_t)std::min(
+                std::max(rounded, 0.0), double(s) - size);
+          }
+        }
+      }
+    }
+
     MiProps pf("hdrfilm");
-    pf.set("width", (int64_t)frameSize.x);
-    pf.set("height", (int64_t)frameSize.y);
+    pf.set("width", (int64_t)filmSize.x);
+    pf.set("height", (int64_t)filmSize.y);
+    if (cropRegion) {
+      pf.set("crop_offset_x", (int64_t)cropOffset.x);
+      pf.set("crop_offset_y", (int64_t)cropOffset.y);
+      pf.set("crop_width", (int64_t)frameSize.x);
+      pf.set("crop_height", (int64_t)frameSize.y);
+    }
     pf.set("pixel_format", "rgba");
     pf.set("component_format", "float32");
     {
@@ -1052,31 +1107,64 @@ struct VariantRender {
             mitsuba::Vector<float, 3>(up.x, up.y, up.z));
 
     MiProps ps;
-    if (const auto *persp = dynamic_cast<const Perspective *>(&camera)) {
+    if (persp) {
       // Depth of field (apertureRadius > 0) uses Mitsuba's thin lens camera.
-      const bool dof = persp->apertureRadius() > 0.f;
       ps = MiProps(dof ? "thinlens" : "perspective");
-      ps.set(
-          "fov", (double)(persp->fovy() * (180.0 / 3.14159265358979323846)));
+      // Mitsuba's fov is the one of the whole film (the frame, or the larger
+      // film around the crop window); its pixels are square, so the
+      // horizontal extent follows from the film ('aspect' is not used).
+      double fovy = persp->fovy();
+      if (!fullRegion) {
+        fovy = 2.0
+            * std::atan(std::tan(0.5 * fovy) * regionSize.y
+                * (double(filmSize.y) / double(frameSize.y)));
+      }
+      ps.set("fov", fovy * (180.0 / 3.14159265358979323846));
       ps.set("fov_axis", "y");
       ps.set("to_world", lookAt);
       if (dof) {
         ps.set("aperture_radius", persp->apertureRadius());
         ps.set("focus_distance", persp->focusDistance());
+      } else if (!fullRegion) {
+        // in units of the film size, y pointing down
+        ps.set("principal_point_offset_x", center.x);
+        ps.set("principal_point_offset_y", -center.y);
       }
     } else if (const auto *ortho =
                    dynamic_cast<const Orthographic *>(&camera)) {
-      // Mitsuba's orthographic sensor spans [-1,1]^2 in its local XY plane;
-      // scale it to the ANARI view height/aspect.
+      // Mitsuba's orthographic sensor spans [-1,1] along its local x axis and
+      // [-1/a,1/a] along y, 'a' being the aspect ratio of the film. Scale it
+      // to the part of the ANARI view (height, aspect) which the region
+      // selects, and move it to the center of that part.
       ps = MiProps("orthographic");
       const float halfH = 0.5f * ortho->height();
       const float halfW = halfH * ortho->aspect();
+      const float filmAspect = float(frameSize.x) / float(frameSize.y);
+      MiXform toWorld = lookAt;
+      if (!fullRegion) {
+        // The local x axis of look_at points to the left of the image.
+        toWorld = toWorld
+            * MiXform::translate(mitsuba::Vector<float, 3>(
+                -2.f * center.x * regionSize.x * halfW,
+                2.f * center.y * regionSize.y * halfH,
+                0.f));
+      }
       ps.set("to_world",
-          lookAt
-              * MiXform::scale(mitsuba::Vector<float, 3>(halfW, halfH, 1.f)));
+          toWorld
+              * MiXform::scale(mitsuba::Vector<float, 3>(halfW * regionSize.x,
+                  halfH * regionSize.y * filmAspect,
+                  1.f)));
     } else {
       throw std::runtime_error("unsupported ANARI camera subtype");
     }
+
+    // Clip planes of the camera rays: Mitsuba starts these rays on the near
+    // plane and ends them on the far plane, both perpendicular to the camera
+    // direction (Frame adds Camera::nearClipDistance() to the depth channel).
+    if (camera.hasNearClip())
+      ps.set("near_clip", camera.nearClip());
+    if (camera.hasFarClip())
+      ps.set("far_clip", camera.farClip());
 
     setObject(ps, "film", pmgr->template create_object<Film>(pf).get());
     setObject(

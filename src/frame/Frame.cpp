@@ -214,8 +214,15 @@ void Frame::renderFrame()
         if (depthRow) {
           // Primary-hit distance; misses develop to 0 -> report the ANARI
           // convention of +inf for the background (ADR 0005).
+          // Mitsuba measures it from the near clip plane, where its camera
+          // rays start; the camera adds the distance up to there.
           const float d = depthRow[x];
-          s.depth = d > 0.f ? d : std::numeric_limits<float>::infinity();
+          s.depth = d > 0.f
+              ? d
+                  + m_camera->nearClipDistance((x + 0.5f) / float(w),
+                      (y + 0.5f) / float(h),
+                      float(w) / float(h))
+              : std::numeric_limits<float>::infinity();
         }
         writeSample((int)x, (int)y, s);
       }
