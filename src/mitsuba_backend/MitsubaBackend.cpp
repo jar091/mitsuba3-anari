@@ -293,11 +293,14 @@ void MitsubaBackend::release()
     mitsuba::Logger::static_shutdown();
     mitsuba::Thread::static_shutdown();
 #if defined(MI_ENABLE_JIT)
-#if defined(__linux__)
-    // A full shutdown unloads the CUDA and OptiX libraries of the driver. On
-    // Linux the process then crashes when the next device initializes OptiX
-    // again (right after "jit_optix_api_init(): loaded OptiX"). A light
-    // shutdown releases the JIT state and keeps the libraries loaded.
+#if defined(__linux__) || defined(_WIN32)
+    // A full shutdown unloads the CUDA and OptiX libraries of the driver. The
+    // process then crashes when the next device initializes OptiX again: on
+    // Linux every time (right after "jit_optix_api_init(): loaded OptiX"), on
+    // Windows now and then (an access violation at an address of the unloaded
+    // library, in about every third run of a test which creates several
+    // devices). A light shutdown releases the JIT state and keeps the
+    // libraries loaded.
     if (g_jitCuda)
       jit_shutdown(1);
     else if (g_jitLlvm || g_jitMetal)

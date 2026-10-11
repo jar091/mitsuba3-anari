@@ -120,6 +120,9 @@ constexpr uint64_t kBulkSphereThreshold = 1024;
 constexpr uint32_t kConeSegments = 64;
 constexpr uint32_t kCurveSegments = 16;
 constexpr uint32_t kJointRings = 8;
+// Tessellation density of emitting spheres in transformed instances.
+constexpr uint32_t kEmitterSphereRings = 16;
+constexpr uint32_t kEmitterSphereSegments = 32;
 
 mitsuba::Color<float, 3> toColor(const float3 &c)
 {
@@ -155,6 +158,10 @@ struct TranslationCache {
   // Same without area emitters, for surfaces in shapegroups (Mitsuba does
   // not support emitters in instanced geometry).
   std::map<const void *, ShapesEntry> surfacesNoEmitter;
+  // (Surface*, Instance*) -> the shapes of an emitting surface in a transformed
+  // instance, in world space and with their area emitters: these are shapes
+  // of the scene, not of the shapegroup of the instance.
+  std::map<std::pair<const void *, const void *>, ShapesEntry> surfacesEmitting;
   std::map<const void *, Entry> emitters; // Light*
   std::map<const void *, Entry> groups; // Group* -> shapegroup
   std::map<const void *, Entry> instances; // Instance* -> instance shape
@@ -743,6 +750,45 @@ struct VariantRender {
     mesh->initialize();
   }
 
+  // Moves the buffers of a mesh from object space to the space of an
+  // instance, for the meshes which cannot be instanced (see surfaceShapes).
+  static void transformMeshBuffers(const mat4 &m,
+      std::vector<float> &P,
+      std::vector<float> &N,
+      std::vector<uint32_t> &I)
+  {
+    for (size_t i = 0; i + 2 < P.size(); i += 3) {
+      const float4 p = linalg::mul(m, float4(P[i], P[i + 1], P[i + 2], 1.f));
+      P[i] = p.x;
+      P[i + 1] = p.y;
+      P[i + 2] = p.z;
+    }
+    const mat3 linear(float3(m[0].x, m[0].y, m[0].z),
+        float3(m[1].x, m[1].y, m[1].z),
+        float3(m[2].x, m[2].y, m[2].z));
+    const float det = linalg::determinant(linear);
+    if (det == 0.f)
+      return;
+    // Normals take the inverse transpose of the linear part.
+    const mat3 normalMatrix = linalg::transpose(linalg::inverse(linear));
+    for (size_t i = 0; i + 2 < N.size(); i += 3) {
+      const float3 n =
+          linalg::mul(normalMatrix, float3(N[i], N[i + 1], N[i + 2]));
+      const float len = linalg::length(n);
+      if (len > 0.f) {
+        N[i] = n.x / len;
+        N[i + 1] = n.y / len;
+        N[i + 2] = n.z / len;
+      }
+    }
+    // A mirroring transform turns the triangles around; the front side (the
+    // one an area emitter emits from) stays where it was.
+    if (det < 0.f) {
+      for (size_t i = 0; i + 2 < I.size(); i += 3)
+        std::swap(I[i + 1], I[i + 2]);
+    }
+  }
+
   // ANARI triangle/quad geometry -> Mitsuba mesh in object space; instance
   // transforms are applied through Mitsuba-native shapegroup/instance
   // shapes (Milestone 11), so one mesh is shared by all instances. The base
@@ -751,7 +797,8 @@ struct VariantRender {
   static mitsuba::ref<Mesh> buildMesh(const MeshGeometry &geo,
       const ColorSource &cs,
       Emitter *emitter,
-      BaseColor &baseColor)
+      BaseColor &baseColor,
+      const mat4 *xfm = nullptr)
   {
     const Array1D *posArray = geo.vertexPositions();
     const uint64_t vcount = posArray->size();
@@ -850,12 +897,16 @@ struct VariantRender {
       baseColor.textureKey = "face_color";
     }
 
+    if (xfm)
+      transformMeshBuffers(*xfm, P, N, I);
     return createMesh(P, N, UV, I, vertexColors, faceColors, emitter);
   }
 
   // Mitsuba mesh from a CPU-tessellated triangle mesh.
-  static mitsuba::ref<Mesh> buildTriMesh(
-      const TriMesh &tm, Emitter *emitter, BaseColor &baseColor)
+  static mitsuba::ref<Mesh> buildTriMesh(const TriMesh &tm,
+      Emitter *emitter,
+      BaseColor &baseColor,
+      const mat4 *xfm = nullptr)
   {
     std::vector<float> P(tm.vertexCount() * 3), N(tm.vertexCount() * 3);
     std::memcpy(P.data(), tm.positions.data(), P.size() * sizeof(float));
@@ -882,6 +933,8 @@ struct VariantRender {
       };
       baseColor.textureKey = "face_color";
     }
+    if (xfm)
+      transformMeshBuffers(*xfm, P, N, I);
     return createMesh(P, N, {}, I, vertexColors, faceColors, emitter);
   }
 
@@ -1239,18 +1292,41 @@ struct VariantRender {
     return pmgr->template create_object<Shape>(p);
   }
 
+  // Whether the shapes of a surface get area emitters.
+  static bool isEmitting(const Surface &surface)
+  {
+    const auto *pbr =
+        dynamic_cast<const PhysicallyBased *>(surface.material());
+    return pbr && pbr->isEmissive();
+  }
+
   // Builds (or reuses) the object-space shape list for one surface.
+  //
+  // With 'instance', the list is the one of an emitting surface in that
+  // (transformed) instance instead: Mitsuba has no emitters in instanced
+  // geometry, so these shapes are built in world space, with their emitters,
+  // and belong to the scene itself. Everything is a triangle mesh then, with
+  // the transform applied to its vertices: the analytic shapes (spheres,
+  // cylinders) do not take a general transform.
   static const std::vector<mitsuba::ref<mitsuba::Object>> &surfaceShapes(
       TranslationCache *cache,
       const Surface *surface,
       RenderStats &stats,
-      bool withEmitters = true)
+      bool withEmitters = true,
+      const Instance *instance = nullptr)
   {
-    const uint64_t stamp = std::max({stampOf(surface),
+    uint64_t stamp = std::max({stampOf(surface),
         stampOf(surface->geometry()),
         stampOf(surface->material())});
-    auto &entry = withEmitters ? cache->surfaces[surface]
-                               : cache->surfacesNoEmitter[surface];
+    if (instance) {
+      stamp = std::max(stamp, stampOf(instance));
+      withEmitters = true;
+    }
+    const mat4 *xfm = instance ? &instance->xfm() : nullptr;
+    auto &entry = instance
+        ? cache->surfacesEmitting[{surface, instance}]
+        : withEmitters ? cache->surfaces[surface]
+                       : cache->surfacesNoEmitter[surface];
     if (entry.stamp == stamp) {
       ++stats.cacheHits;
       return entry.shapes;
@@ -1301,7 +1377,7 @@ struct VariantRender {
       BaseColor bc;
       bc.constant = cs.constant;
       auto emitter = newEmitter();
-      auto mesh = buildTriMesh(tm, emitter.get(), bc);
+      auto mesh = buildTriMesh(tm, emitter.get(), bc, xfm);
       applyPositionSampler(bc);
       finishMesh(mesh.get(), sharedBSDF(cache, material, bc).get());
       addShape(mesh.get());
@@ -1330,7 +1406,7 @@ struct VariantRender {
     if (const auto *mgeo = dynamic_cast<const MeshGeometry *>(geometry)) {
       BaseColor bc;
       auto emitter = newEmitter();
-      auto mesh = buildMesh(*mgeo, cs, emitter.get(), bc);
+      auto mesh = buildMesh(*mgeo, cs, emitter.get(), bc, xfm);
       applyPositionSampler(bc);
       finishMesh(mesh.get(), sharedBSDF(cache, material, bc).get());
       addShape(mesh.get());
@@ -1355,7 +1431,29 @@ struct VariantRender {
       // and emitters (which need sampling routines) stay individual shapes.
       const bool bulk = !emissive && !transmissive
           && (cs.varying() || n > kBulkSphereThreshold);
-      if (bulk) {
+      if (xfm) {
+        // Emitting spheres in a transformed instance: tessellated.
+        TriMesh tm;
+        for (uint64_t i = 0; i < n; ++i) {
+          const uint64_t v = vertexOf(i);
+          const float r = radii ? radii[v] : sph->uniformRadius();
+          if (!(r > 0.f))
+            continue; // reported by SphereGeometry::finalize (§31)
+          float3 col(0.f);
+          PrimitiveColors colors;
+          if (cs.varying()) {
+            col = colorOf(i);
+            colors.face = &col;
+          }
+          appendSphere(tm,
+              centers[v],
+              r,
+              kEmitterSphereRings,
+              kEmitterSphereSegments,
+              colors);
+        }
+        addTriMesh(tm);
+      } else if (bulk) {
         std::vector<float> data;
         std::vector<float> rgb;
         data.reserve(n * 10);
@@ -1413,7 +1511,7 @@ struct VariantRender {
                    dynamic_cast<const ConeCylinderGeometry *>(geometry)) {
       const auto *pos = (const float3 *)cc->positions()->data();
       const uint64_t n = cc->numPrimitives();
-      if (cc->isCone() || cs.varying()) {
+      if (cc->isCone() || cs.varying() || xfm) {
         // Cones, and cylinders with varying colors, are tessellated.
         const auto vColors = vertexColorTable(cc->numVertices());
         const auto pColors = primitiveColorTable(n);
@@ -1480,7 +1578,7 @@ struct VariantRender {
             .second;
       };
 
-      if (cs.varying()) {
+      if (cs.varying() || xfm) {
         const auto vColors = vertexColorTable(curve->numVertices());
         const auto pColors = primitiveColorTable(numSegs);
         TriMesh tm;
@@ -1644,19 +1742,33 @@ struct VariantRender {
       if (!group)
         continue;
 
+      const bool identity = instance->xfmIsIdentity();
+      // A shapegroup cannot hold emitters. The emitting surfaces of a
+      // transformed instance are left out of its shapegroup and become
+      // shapes of the scene, in world space ('emitting'); 'instanced' says
+      // whether anything is left for the shapegroup.
+      bool emitting = false;
+      bool instanced = false;
       uint64_t groupContentStamp = stampOf(group);
       for (const Surface *surface : group->surfaces()) {
         if (!surface || !surface->isValid())
           continue;
-        // (re)build into the cache; shapegroups can't hold emitters
-        surfaceShapes(cache, surface, stats, instance->xfmIsIdentity());
+        // (re)build into the cache
+        if (identity) {
+          surfaceShapes(cache, surface, stats);
+        } else if (isEmitting(*surface)) {
+          surfaceShapes(cache, surface, stats, true, instance);
+          emitting = true;
+        } else {
+          surfaceShapes(cache, surface, stats, false);
+          instanced = true;
+        }
         groupContentStamp = std::max({groupContentStamp,
             stampOf(surface),
             stampOf(surface->geometry()),
             stampOf(surface->material())});
       }
 
-      const bool identity = instance->xfmIsIdentity();
       if (identity) {
         for (const Surface *surface : group->surfaces()) {
           if (!surface || !surface->isValid())
@@ -1665,6 +1777,14 @@ struct VariantRender {
             sceneShapes.push_back(s);
         }
       } else {
+        for (const Surface *surface : group->surfaces()) {
+          if (!surface || !surface->isValid() || !isEmitting(*surface))
+            continue;
+          for (auto &s : cache->surfacesEmitting[{surface, instance}].shapes)
+            sceneShapes.push_back(s);
+        }
+      }
+      if (!identity && (instanced || !emitting)) {
         // Mitsuba-native instancing: shapegroup per Group, instance per
         // ANARI Instance.
         auto &sgEntry = cache->groups[group];
@@ -1672,7 +1792,7 @@ struct VariantRender {
           MiProps psg("shapegroup");
           size_t i = 0;
           for (const Surface *surface : group->surfaces()) {
-            if (!surface || !surface->isValid())
+            if (!surface || !surface->isValid() || isEmitting(*surface))
               continue;
             for (auto &s : cache->surfacesNoEmitter[surface].shapes)
               setObject(psg, "shape_" + std::to_string(i++), s.get());
